@@ -1,10 +1,9 @@
-// src/App.jsx
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
 import './App.css';
 
 // Constants & Hooks
-import { seceLocations, categoryConfig } from './constants/campusData';
+import { categoryConfig } from './constants/campusData';
 import { useGeolocation } from './hooks/useGeolocation';
 
 // Components
@@ -18,6 +17,27 @@ import CompassWidget from './components/map/CompassWidget';
 import LocationPopup from './components/map/LocationPopup';
 
 export default function App() {
+  const [seceLocations, setSeceLocations] = useState([]);
+  const [isDataLoading, setIsDataLoading] = useState(true);
+
+  // Fetch Live Data from Node.js Backend ONLY
+  useEffect(() => {
+    fetch('http://localhost:5000/api/landmarks')
+      .then(response => {
+        if (!response.ok) throw new Error('Failed to connect to database');
+        return response.json();
+      })
+      .then(data => {
+        setSeceLocations(data);
+        setIsDataLoading(false);
+      })
+      .catch(error => {
+        console.error("Backend fetch failed:", error);
+        alert("Cannot connect to the SECE Campus Database. Is the backend running on port 5000?");
+        setIsDataLoading(false);
+      });
+  }, []);
+
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [isCategoriesOpen, setIsCategoriesOpen] = useState(false);
   const [isRoutingOpen, setIsRoutingOpen] = useState(false);
@@ -96,7 +116,7 @@ export default function App() {
     if (tileLayerRef.current) mapRef.current.removeLayer(tileLayerRef.current);
 
     const tileUrl = mapType === 'street' 
-      ? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' 
       : 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 
     tileLayerRef.current = window.L.tileLayer(tileUrl, { maxZoom: 20 }).addTo(mapRef.current);
@@ -107,7 +127,7 @@ export default function App() {
   useEffect(() => {
     if (!mapRef.current || !window.L || !userLocation) return;
     if (!userMarkerRef.current) {
-      const userIconHtml = `<div class="relative flex h-6 w-6 justify-center items-center"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-blue-600 border-2 border-white shadow-md"></span></div>`;
+      const userIconHtml = `<div class="relative flex h-6 w-6 justify-center items-center"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-purple-600 border-2 border-gray-900 shadow-md"></span></div>`;
       const customUserIcon = window.L.divIcon({ className: 'bg-transparent border-none', html: userIconHtml, iconSize: [24, 24], iconAnchor: [12, 12] });
       userMarkerRef.current = window.L.marker([userLocation.lat, userLocation.lng], { icon: customUserIcon, zIndexOffset: 1000 }).addTo(mapRef.current);
     } else {
@@ -117,7 +137,7 @@ export default function App() {
 
   // 5. Routing Machine Engine
   useEffect(() => {
-    if (!mapRef.current || !window.L || !window.L.Routing) return;
+    if (!mapRef.current || !window.L || !window.L.Routing || seceLocations.length === 0) return;
     if (routingControlRef.current) mapRef.current.removeControl(routingControlRef.current);
 
     if (fromId && toId && fromId !== toId) {
@@ -133,7 +153,7 @@ export default function App() {
         const control = window.L.Routing.control({
           waypoints: [fromLatLng, toLatLng],
           routeWhileDragging: false, show: false, addWaypoints: false, fitSelectedRoutes: false, showAlternatives: false, 
-          lineOptions: { styles: [{ color: '#4f46e5', opacity: 0.9, weight: 6, lineCap: 'round' }] },
+          lineOptions: { styles: [{ color: '#a855f7', opacity: 0.9, weight: 6, lineCap: 'round' }] },
           altLineOptions: { styles: [{ opacity: 0 }] }, createMarker: () => null 
         });
 
@@ -149,7 +169,7 @@ export default function App() {
         mapRef.current.flyToBounds(window.L.latLngBounds([fromLatLng, toLatLng]), { padding: [80, 80], maxZoom: 18, animate: true });
       }
     }
-  }, [fromId, toId, leafletLoaded]);
+  }, [fromId, toId, leafletLoaded, seceLocations]);
 
   // 6. Navigation GPS Tracker
   useEffect(() => {
@@ -162,30 +182,23 @@ export default function App() {
     }
   }, [userLocation, activeStep, routeInstructions, routeCoordinates]);
 
-  // 7. TTS (Text-to-Speech)
-  useEffect(() => {
-    if (routeInstructions.length > 0 && routeInstructions[activeStep] && window.speechSynthesis) {
-      window.speechSynthesis.cancel(); 
-      const { text, distance } = routeInstructions[activeStep];
-      let speechText = distance > 0 && activeStep !== routeInstructions.length - 1 ? `${text}. Continue for ${distance} meters.` : (activeStep === routeInstructions.length - 1 ? `You have reached your destination. ${text}` : text);
-      window.speechSynthesis.speak(new SpeechSynthesisUtterance(speechText));
-    }
-  }, [activeStep, routeInstructions]);
-
-  // 8. Place Custom Markers
-  const filteredLocations = useMemo(() => seceLocations.filter(loc => activeCategories.includes(loc.category)), [activeCategories]);
+  // 7. Place Custom Markers
+  const filteredLocations = useMemo(() => seceLocations.filter(loc => activeCategories.includes(loc.category)), [activeCategories, seceLocations]);
   useEffect(() => {
     if (!mapRef.current || !window.L) return;
     Object.values(markersRef.current).forEach(marker => mapRef.current.removeLayer(marker));
     markersRef.current = {};
 
     filteredLocations.forEach(loc => {
-      const color = categoryConfig[loc.category]?.color || '#000';
+      const color = categoryConfig[loc.category]?.color || '#a855f7';
       const emoji = categoryConfig[loc.category]?.emoji || '📍';
       const iconHtml = `
         <div style="position:relative; cursor:pointer; transform-origin:bottom; transition:transform 0.2s;" class="hover:scale-110 group">
-          <div class="zoom-label" style="position:absolute; bottom:42px; left:50%; transform:translateX(-50%); background:rgba(255,255,255,0.95); padding:4px 8px; border-radius:12px; font-size:11px; font-weight:800; white-space:nowrap; color:#1e293b; box-shadow:0 4px 6px rgba(0,0,0,0.1); border: 1px solid ${color}60; pointer-events:none; z-index:3;">${loc.name}</div>
-          <div style="width:34px; height:34px; border-radius:50%; background-color:${color}; display:flex; align-items:center; justify-content:center; font-size:16px; box-shadow:0 3px 6px rgba(0,0,0,0.3); border:2px solid white; position:relative; z-index:2;">${emoji}</div>
+          <div class="zoom-label" style="position:absolute; bottom:42px; left:50%; transform:translateX(-50%); background:rgba(17,24,39,0.95); padding:4px 8px; border-radius:12px; font-size:11px; font-weight:800; white-space:nowrap; color:#e5e7eb; box-shadow:0 4px 6px rgba(0,0,0,0.3); border: 1px solid ${color}60; pointer-events:none; z-index:3;">
+            ${loc.name}
+            ${loc.floorInfo ? `<div style="font-size:9px; color:#a855f7; margin-top:2px;">📍 ${loc.floorInfo}</div>` : ''}
+          </div>
+          <div style="width:34px; height:34px; border-radius:50%; background-color:${color}; display:flex; align-items:center; justify-content:center; font-size:16px; box-shadow:0 3px 6px rgba(0,0,0,0.5); border:2px solid #1f2937; position:relative; z-index:2;">${emoji}</div>
           <div style="position:absolute; bottom:-6px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:8px solid ${color}; z-index:1;"></div>
         </div>`;
       
@@ -194,7 +207,7 @@ export default function App() {
         .on('click', (e) => { window.L.DomEvent.stopPropagation(e); setSelectedLocation(loc); mapRef.current.flyTo([loc.lat, loc.lng], 18, { animate: true }); });
       markersRef.current[loc.id] = marker;
     });
-  }, [filteredLocations]);
+  }, [filteredLocations, seceLocations]);
 
 
   // Helper Functions
@@ -222,26 +235,46 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen w-full bg-gray-50 overflow-hidden font-sans">
+    <div className="flex flex-col h-screen w-full bg-gray-900 overflow-hidden font-sans text-gray-200">
       <style>{`.zoom-label { opacity: ${currentZoom >= 17 ? '1' : '0'}; transform: ${currentZoom >= 17 ? 'translateX(-50%) translateY(0)' : 'translateX(-50%) translateY(10px)'}; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); visibility: ${currentZoom >= 17 ? 'visible' : 'hidden'}; }`}</style>
       
       <Navbar isCategoriesOpen={isCategoriesOpen} setIsCategoriesOpen={setIsCategoriesOpen} isRoutingOpen={isRoutingOpen} setIsRoutingOpen={setIsRoutingOpen} />
 
+      {/* Dark Mode Loading Overlay */}
+      {isDataLoading && (
+        <div className="absolute inset-0 z-[3000] bg-gray-900/90 backdrop-blur-md flex flex-col items-center justify-center">
+          <Loader2 size={48} className="text-purple-500 animate-spin mb-4" />
+          <h2 className="text-xl font-bold text-white">Connecting to Database...</h2>
+          <p className="text-gray-400 text-sm mt-2">Fetching live campus data from backend</p>
+        </div>
+      )}
+
       {locationStatus === 'denied' && (
-        <div className="bg-red-50 border-b border-red-200 text-red-700 px-4 py-2 text-xs font-semibold flex justify-center space-x-2 z-[1500]">
+        <div className="bg-red-900/30 border-b border-red-800 text-red-400 px-4 py-2 text-xs font-semibold flex justify-center space-x-2 z-[1500]">
           <span>⚠️ Location access denied. Enable in browser settings for live routing.</span>
-          <button onClick={() => setLocationStatus('dismissed')} className="hover:text-red-900 ml-2 bg-red-100 p-1 rounded-full"><X size={12} /></button>
+          <button onClick={() => setLocationStatus('dismissed')} className="hover:text-red-300 ml-2 bg-red-900/50 p-1 rounded-full"><X size={12} /></button>
         </div>
       )}
 
       <div className="flex-1 relative">
-        <NavigationBanner routeInstructions={routeInstructions} activeStep={activeStep} setActiveStep={setActiveStep} clearRoute={clearRoute} />
+        <NavigationBanner 
+          routeInstructions={routeInstructions} 
+          activeStep={activeStep} 
+          setActiveStep={setActiveStep} 
+          clearRoute={clearRoute}
+          seceLocations={seceLocations} 
+          toId={toId}
+        />
+        
         <CompassWidget compassHeading={compassHeading} />
+        
         <LegendPanel isCategoriesOpen={isCategoriesOpen} setIsCategoriesOpen={setIsCategoriesOpen} allCategories={allCategories} categoryConfig={categoryConfig} activeCategories={activeCategories} toggleCategory={toggleCategory} />
-        <DirectionsPanel isRoutingOpen={isRoutingOpen} setIsRoutingOpen={setIsRoutingOpen} fromId={fromId} setFromId={setFromId} toId={toId} setToId={setToId} clearRoute={clearRoute} routeInstructions={routeInstructions} />
+        
+        <DirectionsPanel seceLocations={seceLocations} isRoutingOpen={isRoutingOpen} setIsRoutingOpen={setIsRoutingOpen} fromId={fromId} setFromId={setFromId} toId={toId} setToId={setToId} clearRoute={clearRoute} routeInstructions={routeInstructions} />
+        
         <MapControls mapType={mapType} setMapType={setMapType} snapToUserLocation={snapToUserLocation} isLocating={isLocating} userLocation={userLocation} />
         
-        <div ref={mapContainer} className="w-full h-full z-[1]" />
+        <div ref={mapContainer} className="w-full h-full z-[1] bg-gray-800" />
 
         <LocationPopup selectedLocation={selectedLocation} routeInstructions={routeInstructions} categoryConfig={categoryConfig} setSelectedLocation={setSelectedLocation} startNavigation={startNavigation} />
       </div>
